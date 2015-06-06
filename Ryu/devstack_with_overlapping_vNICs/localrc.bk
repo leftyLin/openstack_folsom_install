@@ -1,0 +1,55 @@
+HOST_NAME=$(hostname)
+SERVICE_HOST_NAME=ryu-devstack1
+SERVICE_HOST=192.168.126.158
+HOST_IP=192.168.126.158
+
+#if [ "$HOST_NAME" = "$SERVICE_HOST_NAME" ]; then
+#    # controller node
+#    disable_service n-net
+#    enable_service q-svc q-agt q-dhcp q-l3 quantum ryu
+#else
+#    # compute node
+#    disable_all_services
+#    enable_service rabbit n-cpu quantum q-agt
+#fi
+
+disable_service n-net
+enable_service q-svc q-agt q-dhcp q-l3 quantum ryu rabbit 
+
+FLOATING_RANGE=192.168.100.0/24
+Q_PLUGIN=ryu
+
+Q_HOST=$SERVICE_HOST
+MYSQL_HOST=$SERVICE_HOST
+RABBIT_HOST=$SERVICE_HOST
+GLANCE_HOSTPORT=$SERVICE_HOST:9292
+KEYSTONE_AUTH_HOST=$SERVICE_HOST
+KEYSTONE_SERVICE_HOST=$SERVICE_HOST
+
+# ryu
+RYU_API_HOST=$SERVICE_HOST
+RYU_OFP_HOST=$SERVICE_HOST
+RYU_APPS=ryu.app.gre_tunnel,ryu.app.quantum_adapter,ryu.app.rest,ryu.app.rest_conf_switch,ryu.app.rest_tunnel,ryu.app.tunnel_port_updater
+
+# repo/branch
+QUANTUM_REPO=${GIT_BASE}/yamahata/quantum.git
+QUANTUM_BRANCH=ryu-gre-tunnel-oct-11-2012
+RYU_REPO=${GIT_BASE}/yamahata/ryu.git
+RYU_BRANCH=ryu-gre-tunnel-oct-19-2012
+
+CINDER_BRANCH=stable/folsom
+NOVA_BRANCH=stable/folsom
+SWIFT_BRANCH=stable/folsom
+GLANCE_BRANCH=stable/folsom
+KEYSTONE_BRANCH=stable/folsom
+HORIZON_BRANCH=stable/folsom
+
+# password
+MYSQL_PASSWORD=nova
+RABBIT_PASSWORD=nova
+SERVICE_TOKEN=nova
+SERVICE_PASSWORD=nova
+ADMIN_PASSWORD=nova
+
+# Uncomment the following line to save time by skipping checking of packages that need to be installed
+#OFFLINE=True

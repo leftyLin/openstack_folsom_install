@@ -1,0 +1,622 @@
+##法一
+U12.04 + deb http://archive.ubuntu.com/ubuntu/ quantal-proposed restricted main multiverse universe
+
+function allinone_nova_setup() {
+    install_package kvm libvirt-bin pm-utils <<<KVM要改成kvm=1:84+dfsg-0ubuntu16+1.0+noroms+0ubuntu14.3  <<不行
+##法二
+先用12.04裝 install_package kvm libvirt-bin pm-utils
+再改加上deb http://archive.ubuntu.com/ubuntu/ quantal-proposed restricted main multiverse universe
+再去除install_package kvm libvirt-bin pm-utils <<其他已經是最新版
+br-ex不存在有關係？！？！
+!!!!
+iface eth0 inet "manual"才可以bridge !!!!!!
+
+
+
+!!!!
+
+關閉eth2 ip
+IP:
+sudo ifconfig br-admin 192.168.20.230/24
+sudo route add default gw 192.168.20.1
+DNS:
+sudo nano /etc/resolvconf/resolv.conf.d/head
+nameserver 8.8.8.8
+sudo resolvconf -u
+
+0.
+https://launchpad.net/ubuntu/+source/nova
+01/10: 
+Ubuntu12.10 apt/sources.list新增建議更新軟件庫(Ubuntu Proposed)
+deb http://archive.ubuntu.com/ubuntu/ quantal-proposed restricted main multiverse universe
+才能解決vNIC亂跳
+
+XXXX 1. linux-headers-3.2.0-29-generic
+2. /dev/sda6 rebuild
+3. /etc/hosts <<????
+4. deploy.conf config file 
+5.change IP or you can't link outside
+	NETWORK_TYPE='gre'
+
+(for overlapping_ips, conf/etc.quantum/...)
+5. quantum.conf
+	allow_overlapping_ips = True
+6. nova.conf 
+    ## DisableNova security groups
+	##libvirt_vif_driver=nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver
+	libvirt_vif_driver=nova.virt.libvirt.vif.LibvirtOpenVswitchVirtualPortDriver 
+	linuxnet_interface_driver=nova.network.linux_net.LinuxOVSInterfaceDriver
+	##firewall_driver=nova.virt.libvirt.firewall.IptablesFirewallDriver
+	##LIBVIRT_FIREWALL_DRIVER=nova.virt.firewall.NoopFirewallDriver
+
+(for flat_network, conf/etc.quantum/...)
+7. ovs_quantum_plugin.ini.gre
+
+	network_vlan_ranges = physnet1
+	bridge_mappings = physnet1:br-eth0
+7-1
+	sudo ovs-vsctl add-br br-eth0
+	sudo ovs-vsctl add-port br-eth0 eth0	
+	
+8. run both L3 + DHCP services on the same node,dhcp_agent.ini and l3_agent.ini
+	use_namespaces=True (default already==True)
+
+9. using VM, check KVM or qemu in nova-compute.conf
+	
+==== important for overlapping_ips =====
+http://docs.openstack.org/trunk/openstack-network/admin/content/ch_limitations.html
+> Quantum overlapping IPs do not work with Nova security groups or Nova metadata server: Nova was designed assuming that a particular IP address will only ever be used by a single VM at any time. 
+> Quantum supports overlapping IPs if the allow_overlapping_ips config value is set to 'True'. 
+> We default this value to false to prevent unintentionally running Nova security groups or metadata server with overlapping IPs. If you enable this flag, 
+> you must disable both Nova security groups and the Nova metadata service.
+
+1.quantum.conf
+allow_overlapping_ips = True
+
+2.disable nova security groups by adding??????
+>> 'LIBVIRT_FIREWALL_DRIVER=nova.virt.firewall.NoopFirewallDriver' 
+
+3.If you run both L3 + DHCP services on the same node, you should enable namespaces to avoid conflicts with routes :
+ dhcp_agent.ini and l3_agent.ini have the following setting:
+use_namespaces=True
+
+===result=
+floating IP not in Horizon , Just use CLI bundle ext_net
+
+------------------------------------------------------------------------------------------------------------------------------
+Use Case: Provider Router with Private Networks
+==Create F-ip
+stephen@localhost:~$ nova list
++--------------------------------------+--------+--------+---------------------+
+| ID                                   | Name   | Status | Networks            |
++--------------------------------------+--------+--------+---------------------+
+| 2797cae7-d26b-41ba-ad8a-4eda9e5dd09b | admin1 | ACTIVE | int_net=172.24.17.2 |
++--------------------------------------+--------+--------+---------------------+
+stephen@localhost:~$ quantum port-list -- --device_id ^C
+stephen@localhost:~$ quantum port-list -- --device_id 2797cae7-d26b-41ba-ad8a-4eda9e5dd09b
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+| id                                   | name | mac_address       | fixed_ips                                                                          |
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+| 0cc92496-b294-441a-b189-afae0fd4b415 |      | fa:16:3e:6e:e6:68 | {"subnet_id": "b19989f9-2c3b-4870-bc6d-faa3975e7b38", "ip_address": "172.24.17.2"} |
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+stephen@localhost:~$ quantum floatingip-create ext_net
+Created a new floatingip:
++---------------------+--------------------------------------+
+| Field               | Value                                |
++---------------------+--------------------------------------+
+| fixed_ip_address    |                                      |
+| floating_ip_address | 10.200.8.37                          |
+| floating_network_id | cd3a99da-bad2-4359-805e-c5af6fbe9674 |
+| id                  | 699917e0-d01c-4f7a-b400-9da8d55dbc5f |
+| port_id             |                                      |
+| router_id           |                                      |
+| tenant_id           | 058e57307a3045d9a1fe64d23244d627     |
++---------------------+--------------------------------------+
+stephen@localhost:~$ quantum floatingip-associate 699917e0-d01c-4f7a-b400-9da8d55dbc5f 0cc92496-b294-441a-b189-afae0fd4b415
+Associated floatingip 699917e0-d01c-4f7a-b400-9da8d55dbc5f
+stephen@localhost:~$ quantum floatingip-show 699917e0-d01c-4f7a-b400-9da8d55dbc5f
++---------------------+--------------------------------------+
+| Field               | Value                                |
++---------------------+--------------------------------------+
+| fixed_ip_address    | 172.24.17.2                          |
+| floating_ip_address | 10.200.8.37                          |
+| floating_network_id | cd3a99da-bad2-4359-805e-c5af6fbe9674 |
+| id                  | 699917e0-d01c-4f7a-b400-9da8d55dbc5f |
+| port_id             | 0cc92496-b294-441a-b189-afae0fd4b415 |
+| router_id           | 728c921d-1fe2-45dc-9936-04e7104bbdda |
+| tenant_id           | 058e57307a3045d9a1fe64d23244d627     |
++---------------------+--------------------------------------+
+==delete F-ip==
+stephen@localhost:~$ quantum floatingip-disassociate 699917e0-d01c-4f7a-b400-9da8d55dbc5f 
+Disassociated floatingip 699917e0-d01c-4f7a-b400-9da8d55dbc5f
+stephen@localhost:~$ quantum floatingip-list
++--------------------------------------+------------------+---------------------+---------+
+| id                                   | fixed_ip_address | floating_ip_address | port_id |
++--------------------------------------+------------------+---------------------+---------+
+| 699917e0-d01c-4f7a-b400-9da8d55dbc5f |                  | 10.200.8.37         |         |
++--------------------------------------+------------------+---------------------+---------+
+stephen@localhost:~$ quantum floatingip-delete 699917e0-d01c-4f7a-b400-9da8d55dbc5f
+Deleted floatingip: 699917e0-d01c-4f7a-b400-9da8d55dbc5f
+------------------------------------------------------------------------------------------------------------------------------
+
+==Per-tenant Routers with Private Networks==
+=====Create NEW USER 
+stephen@localhost:~$ keystone tenant-create --name tester --enabled true
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |                                  |
+|   enabled   |               True               |
+|      id     | 673c8ce089e3410b8b55c3457a65711b |
+|     name    |              tester              |
++-------------+----------------------------------+
+stephen@localhost:~$ keystone user-create --name evenuser --tenant_id $EVENID --pass evenpass --enabled true^C
+stephen@localhost:~$ keystone user-create --name tester --tenant_id 673c8ce089e3410b8b55c3457a65711b --pass tester --enabled true
++----------+-------------------------------------------------------------------------------------------------------------------------+
+| Property |                                                          Value                                                          |
++----------+-------------------------------------------------------------------------------------------------------------------------+
+|  email   |                                                                                                                         |
+| enabled  |                                                           True                                                          |
+|    id    |                                             fc34c467b2b840e2b4b035077be13b8f                                            |
+|   name   |                                                          tester                                                         |
+| password | $6$rounds=40000$OfPghQNAaWTGb1Sz$Stmxbs2xsc9RDhft9rNMW16R0bWVjx13LUnLI8mGr1eQXqGV0nROMcLDjCSkHYcJ/Hx42gg.Ivn5/J0uofOOe/ |
+| tenantId |                                             673c8ce089e3410b8b55c3457a65711b                                            |
++----------+-------------------------------------------------------------------------------------------------------------------------+
+stephen@localhost:~$ vim openstackrc
+stephen@localhost:~$ cp openstackrc-demo openstackrc-tester
+stephen@localhost:~$ vim openstackrc-tester 
+===-====CREATE NET
+stephen@localhost:~$ quantum net-create --tenant-id 673c8ce089e3410b8b55c3457a65711b tester_int_net
+Created a new network:
++---------------------------+--------------------------------------+
+| Field                     | Value                                |
++---------------------------+--------------------------------------+
+| admin_state_up            | True                                 |
+| id                        | 561b4da2-46ff-40c5-8366-e6cafde05580 |
+| name                      | tester_int_net                       |
+| provider:network_type     | gre                                  |
+| provider:physical_network |                                      |
+| provider:segmentation_id  | 3                                    |
+| router:external           | False                                |
+| shared                    | False                                |
+| status                    | ACTIVE                               |
+| subnets                   |                                      |
+| tenant_id                 | 673c8ce089e3410b8b55c3457a65711b     |
++---------------------------+--------------------------------------+
+stephen@localhost:~$ quantum net-list
++--------------------------------------+----------------+--------------------------------------+
+| id                                   | name           | subnets                              |
++--------------------------------------+----------------+--------------------------------------+
+| 561b4da2-46ff-40c5-8366-e6cafde05580 | tester_int_net |                                      |
+| cd3a99da-bad2-4359-805e-c5af6fbe9674 | ext_net        | 80bef966-e73a-4482-9d07-9a4e6e8a759e |
++--------------------------------------+----------------+--------------------------------------+
+stephen@localhost:~$ quantum subnet-list
++--------------------------------------+------+---------------+------------------------------------------------+
+| id                                   | name | cidr          | allocation_pools                               |
++--------------------------------------+------+---------------+------------------------------------------------+
+| 80bef966-e73a-4482-9d07-9a4e6e8a759e |      | 10.200.8.0/24 | {"start": "10.200.8.36", "end": "10.200.8.40"} |
++--------------------------------------+------+---------------+------------------------------------------------+
+== Create router for tester
+stephen@localhost:~$ source openstackrc
+stephen@localhost:~$ quantum router-list
++--------------------------------------+--------------+--------------------------------------------------------+
+| id                                   | name         | external_gateway_info                                  |
++--------------------------------------+--------------+--------------------------------------------------------+
+| 728c921d-1fe2-45dc-9936-04e7104bbdda | router-admin | {"network_id": "cd3a99da-bad2-4359-805e-c5af6fbe9674"} |
++--------------------------------------+--------------+--------------------------------------------------------+
+stephen@localhost:~$ quantum router-create --tenant_id 673c8ce089e3410b8b55c3457a65711b router-tester
+Created a new router:
++-----------------------+--------------------------------------+
+| Field                 | Value                                |
++-----------------------+--------------------------------------+
+| admin_state_up        | True                                 |
+| external_gateway_info |                                      |
+| id                    | 59537082-6676-418a-b586-5a0fb3e43f8a |
+| name                  | router-tester                        |
+| status                | ACTIVE                               |
+| tenant_id             | 673c8ce089e3410b8b55c3457a65711b     |
++-----------------------+--------------------------------------+
+
+Add the router to the subnet:
+stephen@localhost:~$ quantum subnet-list
++--------------------------------------+------+----------------+--------------------------------------------------+
+| id                                   | name | cidr           | allocation_pools                                 |
++--------------------------------------+------+----------------+--------------------------------------------------+
+| 3c773f0c-85d0-4ccb-a0c2-1fe3def30ae5 |      | 172.24.17.0/24 | {"start": "172.24.17.1", "end": "172.24.17.253"} |
+| 80bef966-e73a-4482-9d07-9a4e6e8a759e |      | 10.200.8.0/24  | {"start": "10.200.8.36", "end": "10.200.8.40"}   |
+| b19989f9-2c3b-4870-bc6d-faa3975e7b38 |      | 172.24.17.0/24 | {"start": "172.24.17.1", "end": "172.24.17.253"} |
++--------------------------------------+------+----------------+--------------------------------------------------+
+stephen@localhost:~$ quantum router-interface-add 59537082-6676-418a-b586-5a0fb3e43f8a 3c773f0c-85d0-4ccb-a0c2-1fe3def30ae5
+Added interface to router 59537082-6676-418a-b586-5a0fb3e43f8a
+
+already have ext_net so,Set the router for the external network:
+stephen@localhost:~$ quantum net-list
++--------------------------------------+----------------+--------------------------------------+
+| id                                   | name           | subnets                              |
++--------------------------------------+----------------+--------------------------------------+
+| 561b4da2-46ff-40c5-8366-e6cafde05580 | tester_int_net | 3c773f0c-85d0-4ccb-a0c2-1fe3def30ae5 |
+| 9c65cf10-390d-486d-ae0d-159bc90ed0ae | int_net        | b19989f9-2c3b-4870-bc6d-faa3975e7b38 |
+| cd3a99da-bad2-4359-805e-c5af6fbe9674 | ext_net        | 80bef966-e73a-4482-9d07-9a4e6e8a759e |
++--------------------------------------+----------------+--------------------------------------+
+stephen@localhost:~$ quantum router-gateway-set 59537082-6676-418a-b586-5a0fb3e43f8a cd3a99da-bad2-4359-805e-c5af6fbe9674
+Set gateway for router 59537082-6676-418a-b586-5a0fb3e43f8a
+
+Floating IP Allocation for tester1
+------------------------------------------------------------------------------------------------------------------------------
+=====
+===== flat_logical_network for tester==========
+=======  ovs_quantum_plugin.ini
+# (ListOpt) Comma-separated list of
+# <physical_network>[:<vlan_min>:<vlan_max>] tuples enumerating ranges
+# of VLAN IDs on named physical networks that are available for
+# allocation. All physical networks listed are available for flat and
+# VLAN provider network creation. Specified ranges of VLAN IDs are
+# available for tenant network allocation if tenant_network_type is
+# 'vlan'. If empty, only gre and local networks may be created.
+#
+network_vlan_ranges = physnet1
+
+# (ListOpt) Comma-separated list of <physical_network>:<bridge> tuples
+# mapping physical network names to the agent's node-specific OVS
+# bridge names to be used for flat and VLAN networks. Each bridge must
+# exist, and should have a physical network interface configured as a
+# port. All physical networks listed in network_vlan_ranges on the
+# server should have mappings to appropriate bridges on each agent.
+#
+# Default: bridge_mappings =
+# Example: bridge_mappings = physnet1:br-eth1
+bridge_mappings = physnet1:br-eth0
+
+======== Provider Router with Private Networks會無法運作 dhcp配發失敗
+=====
+stephen@localhost:~$ source openstackrc
+stephen@localhost:~$ quantum net-create --tenant-id 058e57307a3045d9a1fe64d23244d627 flatnet1 --shared --provider:network_type flat --provider:physical_network physnet1
+Created a new network:
++---------------------------+--------------------------------------+
+| Field                     | Value                                |
++---------------------------+--------------------------------------+
+| admin_state_up            | True                                 |
+| id                        | b80a9c10-f7e8-4662-9d75-768267de3a34 |
+| name                      | flatnet1                             |
+| provider:network_type     | flat                                 |
+| provider:physical_network | physnet1                             |
+| provider:segmentation_id  |                                      |
+| router:external           | False                                |
+| shared                    | True                                 |
+| status                    | ACTIVE                               |
+| subnets                   |                                      |
+| tenant_id                 | 058e57307a3045d9a1fe64d23244d627     |
++---------------------------+--------------------------------------+
+
+stephen@localhost:~$ quantum subnet-create --tenant-id 058e57307a3045d9a1fe64d23244d627 flatnet1 10.200.8.0/24
+Created a new subnet:
++------------------+------------------------------------------------+
+| Field            | Value                                          |
++------------------+------------------------------------------------+
+| allocation_pools | {"start": "10.200.8.2", "end": "10.200.8.254"} |
+| cidr             | 10.200.8.0/24                                  |
+| dns_nameservers  |                                                |
+| enable_dhcp      | True                                           |
+| gateway_ip       | 10.200.8.1                                     |
+| host_routes      |                                                |
+| id               | d2cc8e12-fcd7-4a04-b75d-6516eaee161a           |
+| ip_version       | 4                                              |
+| name             |                                                |
+| network_id       | b80a9c10-f7e8-4662-9d75-768267de3a34           |
+| tenant_id        | 058e57307a3045d9a1fe64d23244d627               |
++------------------+------------------------------------------------+
+
+####### FW's subnet NO GW
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df --no-gateway tester_int_net 192.168.5.0/24 --enable_dhcp=False
+Created a new subnet:
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.1", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       |                                                  |
+| host_routes      |                                                  |
+| id               | 49085351-926c-4585-90cf-91f4575da303             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+result:
+ Error
+
+####### FW's subnet with GW
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df tester_int_net 192.168.5.0/24 --enable_dhcp=False
+Created a new subnet:
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.2", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       | 192.168.5.1                                      |
+| host_routes      |                                                  |
+| id               | 0fabd696-4a06-489e-b236-357921114ad2             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+
+result:
+Active, create VM OK
+but FW not transport
+
+
+== no need ==
+4. deply.sh >> EXT_NET DHCP on
+5. etc/nova.conf
+
+
+===
+stephen@localhost:~$ source openstackrc
+stephen@localhost:~$ quantum router-list
++--------------------------------------+--------------+--------------------------------------------------------+
+| id                                   | name         | external_gateway_info                                  |
++--------------------------------------+--------------+--------------------------------------------------------+
+| 6e999f1b-05c8-4193-b398-82ec01a538c6 | router-admin | {"network_id": "9ce5b660-accf-492d-9e63-6a89186d1727"} |
++--------------------------------------+--------------+--------------------------------------------------------+
+stephen@localhost:~$ quantum net-list
++--------------------------------------+---------+--------------------------------------+
+| id                                   | name    | subnets                              |
++--------------------------------------+---------+--------------------------------------+
+| 9ce5b660-accf-492d-9e63-6a89186d1727 | ext_net | f8c166ce-8cb4-4a86-b7c7-c6f1f74aea61 |
+| dc5af753-48a6-45a4-b1e4-964faa04dd01 | int_net | 5d7c5b52-1ad1-4837-bd9b-c40588ec9c0e |
++--------------------------------------+---------+--------------------------------------+
+stephen@localhost:~$ quantum router-gateway-set 6e999f1b-05c8-4193-b398-82ec01a538c6 9ce5b660-accf-492d-9e63-6a89186d1727
+Set gateway for router 6e999f1b-05c8-4193-b398-82ec01a538c6
+stephen@localhost:~$ source openstackrc-demo 
+stephen@localhost:~$ nova list
++--------------------------------------+-------+--------+---------------------+
+| ID                                   | Name  | Status | Networks            |
++--------------------------------------+-------+--------+---------------------+
+| f73e2796-659d-438b-9d6f-9cab874a11ca | demo1 | ACTIVE | int_net=192.168.5.2 |
++--------------------------------------+-------+--------+---------------------+
+stephen@localhost:~$ quantum port-list -- --device_id f73e2796-659d-438b-9d6f-9cab874a11ca
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+| id                                   | name | mac_address       | fixed_ips                                                                          |
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+| 870da09e-bb86-4fd3-a0a9-1d095a3bb116 |      | fa:16:3e:6a:77:e1 | {"subnet_id": "5d7c5b52-1ad1-4837-bd9b-c40588ec9c0e", "ip_address": "192.168.5.2"} |
++--------------------------------------+------+-------------------+------------------------------------------------------------------------------------+
+stephen@localhost:~$ quantum floatingip-create ext_net
+Created a new floatingip:
++---------------------+--------------------------------------+
+| Field               | Value                                |
++---------------------+--------------------------------------+
+| fixed_ip_address    |                                      |
+| floating_ip_address | 192.168.20.37                        |
+| floating_network_id | 9ce5b660-accf-492d-9e63-6a89186d1727 |
+| id                  | e2adda2f-ed0a-4e89-a72b-f9e91f02be6f |
+| port_id             |                                      |
+| router_id           |                                      |
+| tenant_id           | 5bb0dba7475347b68ecda9d417cce169     |
++---------------------+--------------------------------------+
+stephen@localhost:~$ uantum floatingip-associate e2adda2f-ed0a-4e89-a72b-f9e91f02be6f 870da09e-bb86-4fd3-a0a9-1d095a3bb116
+No command 'uantum' found, did you mean:
+ Command 'quantum' from package 'python-quantumclient' (universe)
+uantum: command not found
+stephen@localhost:~$ quantum floatingip-associate e2adda2f-ed0a-4e89-a72b-f9e91f02be6f 870da09e-bb86-4fd3-a0a9-1d095a3bb116
+Associated floatingip e2adda2f-ed0a-4e89-a72b-f9e91f02be6f
+stephen@localhost:~$ quantum floatingip-show e2adda2f-ed0a-4e89-a72b-f9e91f02be6f
++---------------------+--------------------------------------+
+| Field               | Value                                |
++---------------------+--------------------------------------+
+| fixed_ip_address    | 192.168.5.2                          |
+| floating_ip_address | 192.168.20.37                        |
+| floating_network_id | 9ce5b660-accf-492d-9e63-6a89186d1727 |
+| id                  | e2adda2f-ed0a-4e89-a72b-f9e91f02be6f |
+| port_id             | 870da09e-bb86-4fd3-a0a9-1d095a3bb116 |
+| router_id           | 6e999f1b-05c8-4193-b398-82ec01a538c6 |
+| tenant_id           | 5bb0dba7475347b68ecda9d417cce169     |
++---------------------+--------------------------------------+
+stephen@localhost:~$ keystone tenant-create --name tester --enabled true
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |                                  |
+|   enabled   |               True               |
+|      id     | d5ac363c668c47c6830759cc7ce487df |
+|     name    |              tester              |
++-------------+----------------------------------+
+stephen@localhost:~$ keystone user-create --name tester --tenant_id d5ac363c668c47c6830759cc7ce487df --pass tester --enabled true
++----------+-------------------------------------------------------------------------------------------------------------------------+
+| Property |                                                          Value                                                          |
++----------+-------------------------------------------------------------------------------------------------------------------------+
+|  email   |                                                                                                                         |
+| enabled  |                                                           True                                                          |
+|    id    |                                             f1f173d596f848e6b6714fd9ac60b4bd                                            |
+|   name   |                                                          tester                                                         |
+| password | $6$rounds=40000$l.j93z4AQriKTh.X$I1JkXKpXkiuQsf72zBRkPVqalULZozvCWBY8pZtBO54GW4MuQsNMRWF34D2okOwOTkolsu9otOrXcjPwHlkA31 |
+| tenantId |                                             d5ac363c668c47c6830759cc7ce487df                                            |
++----------+-------------------------------------------------------------------------------------------------------------------------+
+stephen@localhost:~$ cp openstackrc-demo openstackrc-tester
+stephen@localhost:~$ vim openstackrc-tester 
+stephen@localhost:~$ source openstackrc-tester 
+stephen@localhost:~$ quantum net-create --tenant-id d5ac363c668c47c6830759cc7ce487df tester_int_net
+Created a new network:
++-----------------+--------------------------------------+
+| Field           | Value                                |
++-----------------+--------------------------------------+
+| admin_state_up  | True                                 |
+| id              | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e |
+| name            | tester_int_net                       |
+| router:external | False                                |
+| shared          | False                                |
+| status          | ACTIVE                               |
+| subnets         |                                      |
+| tenant_id       | d5ac363c668c47c6830759cc7ce487df     |
++-----------------+--------------------------------------+
+stephen@localhost:~$ quantum net-create --tenant-id d5ac363c668c47c6830759cc7ce487df flatnet1 --shared --provider:network_type flat --provider:physical_network physnet1
+{"QuantumError": "Access was denied to this resource."}
+stephen@localhost:~$ source openstackrc
+stephen@localhost:~$ quantum net-create --tenant-id d5ac363c668c47c6830759cc7ce487df flatnet1 --shared --provider:network_type flat --provider:physical_network physnet1
+Created a new network:
++---------------------------+--------------------------------------+
+| Field                     | Value                                |
++---------------------------+--------------------------------------+
+| admin_state_up            | True                                 |
+| id                        | 1be917f6-e6c8-4dfc-b6fe-c49f0f575292 |
+| name                      | flatnet1                             |
+| provider:network_type     | flat                                 |
+| provider:physical_network | physnet1                             |
+| provider:segmentation_id  |                                      |
+| router:external           | False                                |
+| shared                    | True                                 |
+| status                    | ACTIVE                               |
+| subnets                   |                                      |
+| tenant_id                 | d5ac363c668c47c6830759cc7ce487df     |
++---------------------------+--------------------------------------+
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df flatnet1 192.168.20.0/24 -- --enable_dhcp=False
+Created a new subnet:
++------------------+----------------------------------------------------+
+| Field            | Value                                              |
++------------------+----------------------------------------------------+
+| allocation_pools | {"start": "192.168.20.2", "end": "192.168.20.254"} |
+| cidr             | 192.168.20.0/24                                    |
+| dns_nameservers  |                                                    |
+| enable_dhcp      | False                                              |
+| gateway_ip       | 192.168.20.1                                       |
+| host_routes      |                                                    |
+| id               | 122beaf0-2c1b-4602-99ee-1bfd7792e3cb               |
+| ip_version       | 4                                                  |
+| name             |                                                    |
+| network_id       | 1be917f6-e6c8-4dfc-b6fe-c49f0f575292               |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                   |
++------------------+----------------------------------------------------+
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df tester_int_net 192.168.5.0/24 -- --enable_dhcp=False
+Created a new subnet:
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.2", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       | 192.168.5.1                                      |
+| host_routes      |                                                  |
+| id               | 718e1086-651f-4c76-bb43-3685d2009cf3             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+stephen@localhost:~$ glance add name=Ubuntu-12.04 is_public=true container_format=ovf disk_format=qcow2 < precise-server-cloudimg-amd64-disk1.img
+-bash: precise-server-cloudimg-amd64-disk1.img: No such file or directory
+stephen@localhost:~$ ls
+interfaces  ipfire.img  openstack_folsom_deploy_1218  openstackrc  openstackrc-demo  openstackrc-tester  XubuntuRawimage.img
+stephen@localhost:~$ qemu-img convert -f raw ipfire.img -O qcow2 ipfire.qcow2
+stephen@localhost:~$ ls
+interfaces  ipfire.img  ipfire.qcow2  openstack_folsom_deploy_1218  openstackrc  openstackrc-demo  openstackrc-tester  XubuntuRawimage.img
+stephen@localhost:~$ qemu-img convert -f raw XubuntuRawimage.img -O qcow2 xubuntu.qcow2
+stephen@localhost:~$ glance add name="ipfire" is_public=true container_format=ovf disk_format=qcow2 < ipfire.qcow2 
+Added new image with ID: 30cb5069-3120-4d9e-ac74-fff92417fd87
+stephen@localhost:~$ ls -lh
+total 9.5G
+-rw-r--r-- 1 stephen stephen  702 Dec 18 15:11 interfaces
+-rw------- 1 stephen stephen 1.0G Dec 18 15:15 ipfire.img
+-rw-r--r-- 1 stephen stephen 307M Dec 18 15:47 ipfire.qcow2
+drwxrwxrwx 4 stephen stephen 4.0K Dec 18 15:44 openstack_folsom_deploy_1218
+-rw-r--r-- 1 root    root     216 Dec 18 15:23 openstackrc
+-rw-r--r-- 1 root    root     216 Dec 18 15:23 openstackrc-demo
+-rw-r--r-- 1 stephen stephen  219 Dec 18 15:41 openstackrc-tester
+-rw-r--r-- 1 stephen stephen 3.2G Dec 18 15:48 xubuntu.qcow2
+-rw------- 1 stephen stephen 5.0G Dec 18 15:22 XubuntuRawimage.img
+stephen@localhost:~$ glance add name="xubuntu" is_public=true container_format=ovf disk_format=qcow2 < xubuntu.qcow2 
+Added new image with ID: ed53e6b6-22cd-4971-b9e0-f444065e3b74
+stephen@localhost:~$ quantum subnet-show testerint_net
+Unable to find subnet with name 'testerint_net'
+stephen@localhost:~$ quantum subnet-show tester_int_net
+Unable to find subnet with name 'tester_int_net'
+stephen@localhost:~$ quantum subnet-show 718e1086-651f-4c76-bb43-3685d2009cf3
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.2", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       | 192.168.5.1                                      |
+| host_routes      |                                                  |
+| id               | 718e1086-651f-4c76-bb43-3685d2009cf3             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df tester_int_net 192.168.5.0/24 -- --enable_dhcp=False --no-gateway
+Created a new subnet:
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.2", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       | 192.168.5.1                                      |
+| host_routes      |                                                  |
+| id               | f3d096ad-12a8-4021-a1cc-56472512aa1b             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+stephen@localhost:~$ quantum subnet-create --tenant-id d5ac363c668c47c6830759cc7ce487df --no-gateway tester_int_net 192.168.5.0/24 --enable_dhcp=False
+Created a new subnet:
++------------------+--------------------------------------------------+
+| Field            | Value                                            |
++------------------+--------------------------------------------------+
+| allocation_pools | {"start": "192.168.5.1", "end": "192.168.5.254"} |
+| cidr             | 192.168.5.0/24                                   |
+| dns_nameservers  |                                                  |
+| enable_dhcp      | False                                            |
+| gateway_ip       |                                                  |
+| host_routes      |                                                  |
+| id               | 49085351-926c-4585-90cf-91f4575da303             |
+| ip_version       | 4                                                |
+| name             |                                                  |
+| network_id       | b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e             |
+| tenant_id        | d5ac363c668c47c6830759cc7ce487df                 |
++------------------+--------------------------------------------------+
+
+Result : Fail
+====
+==== 12/19 改用ubuntu server ==
+強行指名ipaddress 192.168.20.2, 192.168.5.254(gateway)
+stephen@localhost:~$ nova boot --flavor 1 --image ca7b26fc-1b2d-4c8c-ba94-e24293e1a495 --security-groups default --nic net-id=1be917f6-e6c8-4dfc-b6fe-c49f0f575292,v4-fixed-ip=192.168.20.2 --nic net-id=b326d0b0-ec4b-4c3d-9dd3-8a4d2c63c61e,v4-fixed-ip=192.168.5.254 Gateway1
++------------------------+----------------------------------------------------------+
+| Property               | Value                                                    |
++------------------------+----------------------------------------------------------+
+| OS-DCF:diskConfig      | MANUAL                                                   |
+| OS-EXT-STS:power_state | 0                                                        |
+| OS-EXT-STS:task_state  | scheduling                                               |
+| OS-EXT-STS:vm_state    | building                                                 |
+| accessIPv4             |                                                          |
+| accessIPv6             |                                                          |
+| adminPass              | ESXSU4Jj5fiX                                             |
+| config_drive           |                                                          |
+| created                | 2012-12-19T01:27:22Z                                     |
+| flavor                 | m1.tiny                                                  |
+| hostId                 | 1af7334a4931c9adfc1256ee361ba825aa6e2b31c7352dc1a57d24a2 |
+| id                     | 034ea261-752e-4a5d-9e3e-10875587d801                     |
+| image                  | ubuntu server                                            |
+| key_name               | None                                                     |
+| metadata               | {}                                                       |
+| name                   | Gateway1                                                 |
+| progress               | 0                                                        |
+| security_groups        | [{u'name': u'default'}]                                  |
+| status                 | BUILD                                                    |
+| tenant_id              | d5ac363c668c47c6830759cc7ce487df                         |
+| updated                | 2012-12-19T01:27:22Z                                     |
+| user_id                | f1f173d596f848e6b6714fd9ac60b4bd                         |
++------------------------+----------------------------------------------------------+
+
+
+
